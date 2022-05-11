@@ -181,7 +181,7 @@ class TopDownSFTN(BasePose):
             SB1_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB1_Output, output, target_weight)
             SB2_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB2_Output, output, target_weight)
             """
-            SB3_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB3_Output, output)
+            SB3_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB3_Output, target)
             # keypoint_losses['CE_loss'] = (SB1_CE_Loss + SB2_CE_Loss + SB3_CE_Loss) / 3
             keypoint_losses['CE_loss'] = SB3_CE_Loss
             losses.update(keypoint_losses)
