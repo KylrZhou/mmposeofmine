@@ -38,12 +38,12 @@ class TopDownSFTN(BasePose):
     def __init__(self,
                  backbone,
                  # SB1_Backbone=None, #Student Branch 1
-                 # SB2_Backbone=None, #Student Branch 2
+                 SB2_Backbone=None, #Student Branch 2
                  SB3_Backbone=None, #Student Branch 3
                  neck=None,
                  keypoint_head=None,
                  # SB1_keypoint_head=None, #Student Branch 1 Keypoint Head
-                 # SB2_keypoint_head=None, #Student Branch 2 Keypoint Head
+                 SB2_keypoint_head=None, #Student Branch 2 Keypoint Head
                  SB3_keypoint_head=None, #Student Branch 3 Keypoint Head
                  train_cfg=None,
                  test_cfg=None,
@@ -54,7 +54,7 @@ class TopDownSFTN(BasePose):
 
         self.backbone = builder.build_backbone(backbone)
         # self.SB1_Backbone = builder.build_backbone(SB1_Backbone)
-        # self.SB2_Backbone = builder.build_backbone(SB2_Backbone)
+        self.SB2_Backbone = builder.build_backbone(SB2_Backbone)
         self.SB3_Backbone = builder.build_backbone(SB3_Backbone)
 
         self.train_cfg = train_cfg
@@ -77,7 +77,7 @@ class TopDownSFTN(BasePose):
 
             self.keypoint_head = builder.build_head(keypoint_head)
             # self.SB1_keypoint_head = builder.build_head(SB1_keypoint_head) #Student Branch 1 Keypoint Head
-            # self.SB2_keypoint_head = builder.build_head(SB2_keypoint_head) #Student Branch 2 Keypoint Head
+            self.SB2_keypoint_head = builder.build_head(SB2_keypoint_head) #Student Branch 2 Keypoint Head
             self.SB3_keypoint_head = builder.build_head(SB3_keypoint_head) #Student Branch 3 Keypoint Head
 
         self.init_weights(pretrained=pretrained)
@@ -157,11 +157,11 @@ class TopDownSFTN(BasePose):
         """Defines the computation performed at every call when training."""
         origin_output = self.backbone(img)
         # SB1_Output = self.SB1_Backbone(origin_output[0])
-        # SB2_Output = self.SB2_Backbone(origin_output[1])
+        SB2_Output = self.SB2_Backbone(origin_output[1])
         SB3_Output = self.SB3_Backbone(origin_output[2])
         output = self.keypoint_head(origin_output[3])
         # SB1_Output = self.SB1_keypoint_head(SB1_Output)
-        # SB2_Output = self.SB2_keypoint_head(SB2_Output)
+        SB2_Output = self.SB2_keypoint_head(SB2_Output)
         SB3_Output = self.SB3_keypoint_head(SB3_Output)
 
         # if return loss
@@ -172,19 +172,19 @@ class TopDownSFTN(BasePose):
             keypoint_losses['GT_loss'] = self.keypoint_head.get_loss(output, target, target_weight)
             """
             SB1_KL_Loss = self.SB3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(SB1_Output), torch.nn.functional.softmax(output), target_weight)
-            SB2_KL_Loss = self.SB3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(SB2_Output), torch.nn.functional.softmax(output), target_weight)
             """
-            SB3_KL_Loss = self.SB3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(SB3_Output, dim=0), torch.nn.functional.softmax(output, dim=0))
-            # keypoint_losses['KL_loss'] = (SB1_KL_Loss + SB2_KL_Loss + SB3_KL_Loss) / 3
-            keypoint_losses['KL_loss'] = SB3_KL_Loss
+            SB2_KL_Loss = self.SB3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(SB2_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0))
+            SB3_KL_Loss = self.SB3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(SB3_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0))
+            keypoint_losses['KL_loss'] = (SB2_KL_Loss + SB3_KL_Loss) / 2
             """
             SB1_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB1_Output, output, target_weight)
-            SB2_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB2_Output, output, target_weight)
             """
-            SB3_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB3_Output, target)
-            # keypoint_losses['CE_loss'] = (SB1_CE_Loss + SB2_CE_Loss + SB3_CE_Loss) / 3
-            keypoint_losses['CE_loss'] = SB3_CE_Loss
+            SB2_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB2_Output, target) * 0.01
+            SB3_CE_Loss = self.SB3_keypoint_head.get_loss_CE(SB3_Output, target) * 0.01
+            keypoint_losses['CE_loss'] = (SB2_CE_Loss + SB3_CE_Loss) / 2
             losses.update(keypoint_losses)
+            keypoint_accuracy['SB2_acc'] = self.keypoint_head.get_accuracy(SB2_Output, target, target_weight)
+            keypoint_accuracy['SB3_acc'] = self.keypoint_head.get_accuracy(SB3_Output, target, target_weight)
             keypoint_accuracy['acc_pose'] = self.keypoint_head.get_accuracy(output, target, target_weight)
             losses.update(keypoint_accuracy)
 
