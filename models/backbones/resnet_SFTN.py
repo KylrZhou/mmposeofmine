@@ -7,6 +7,7 @@ from mmcv.cnn import (ConvModule, build_conv_layer, build_norm_layer,
                       constant_init, kaiming_init)
 from mmcv.utils.parrots_wrapper import _BatchNorm
 
+import torch
 from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
@@ -420,6 +421,24 @@ class ResLayer(nn.Sequential):
         super().__init__(*layers)
 
 
+class SE_Block(torch.nn.Module):
+    def __init__(self, c, r=16):
+        super().__init__()
+        self.squeeze = torch.nn.AdaptiveAvgPool2d(1)
+        self.excitation = torch.nn.Sequential(
+            torch.nn.Linear(c, c // r, bias=False),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Linear(c // r, c, bias=False),
+            torch.nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        bs, c, _, _ = x.shape
+        y = self.squeeze(x).view(bs, c)
+        y = self.excitation(y).view(bs, c, 1, 1)
+        return x * y.expand_as(x)
+
+
 @BACKBONES.register_module()
 class ResNetSFTN(BaseBackbone):
     """ResNet backbone.
@@ -506,8 +525,9 @@ class ResNetSFTN(BaseBackbone):
                  with_cp=False,
                  zero_init_residual=True):
         # Protect mutable default arguments
-        norm_cfg = copy.deepcopy(norm_cfg)
         super().__init__()
+        self.SE = SE_Block(c=in_channels)
+        norm_cfg = copy.deepcopy(norm_cfg)
         if depth not in self.arch_settings:
             raise KeyError(f'invalid depth {depth} for resnet')
         self.depth = depth
@@ -673,6 +693,7 @@ class ResNetSFTN(BaseBackbone):
         x = self.maxpool(x)
         """
         outs = []
+        #x = self.SE(x)
         for i, layer_name in enumerate(self.res_layers):
             res_layer = getattr(self, layer_name)
             x = res_layer(x)

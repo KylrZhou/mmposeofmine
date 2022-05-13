@@ -32,6 +32,11 @@ model = dict(
     type='TopDownSFTN',
     pretrained='torchvision://resnet152',
     backbone=dict(type='ResNet', depth=152, out_indices=(0, 1, 2, 3,)),
+    SB1_Backbone=dict(type='ResNetSFTN',
+                      depth=1,
+                      in_channels=256,
+                      stem_channels=256,
+                      base_channels=128),
     SB2_Backbone=dict(type='ResNetSFTN',
                       depth=2,
                       in_channels=512,
@@ -47,6 +52,11 @@ model = dict(
         in_channels=2048,
         out_channels=channel_cfg['num_output_channels'],
         loss_keypoint=dict(type='JointsMSELoss', use_target_weight=True)),
+    SB1_keypoint_head=dict(
+        type='TopdownHeatmapSimpleHeadSFTN',
+        in_channels=2048,
+        out_channels=channel_cfg['num_output_channels'],
+        loss_keypoint=dict(type='JointsMSELoss', use_target_weight=False)),
     SB2_keypoint_head=dict(
         type='TopdownHeatmapSimpleHeadSFTN',
         in_channels=2048,
@@ -127,7 +137,7 @@ test_pipeline = val_pipeline
 
 data_root = 'data/coco'
 data = dict(
-    samples_per_gpu=8,
+    samples_per_gpu=4,
     workers_per_gpu=2,
     val_dataloader=dict(samples_per_gpu=32),
     test_dataloader=dict(samples_per_gpu=32),
