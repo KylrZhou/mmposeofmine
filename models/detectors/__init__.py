@@ -16,10 +16,11 @@ from .top_down_GTRES import TopDownGTRES
 from .top_down_KLDiv import TopDownKLDiv
 from .top_down_KDSE import TopDownKDSE
 from .top_down_SFTN import TopDownSFTN
+from .top_down_SFTNSEST import TopDownSFTNSEST
 __all__ = [
     'TopDown', 'AssociativeEmbedding', 'ParametricMesh', 'MultiTask',
     'PoseLifter', 'Interhand3D', 'PoseWarper', 'DetectAndRegress',
     'VoxelCenterDetector', 'VoxelSinglePose', 'TopDownDistill',
     'TopDownKDNAS', 'TopDownKDNASv2', 'TopDownKD2CONV', 'TopDownGTRES',
-    'TopDownKLDiv', 'TopDownKDSE', 'TopDownSFTN'
+    'TopDownKLDiv', 'TopDownKDSE', 'TopDownSFTN', 'TopDownSFTNSEST'
 ]
