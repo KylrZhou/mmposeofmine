@@ -23,7 +23,7 @@ from mmcv.runner.checkpoint import _load_checkpoint, load_state_dict
 import torch
 
 @POSENETS.register_module()
-class TopDownKLDiv(BasePose):
+class TopDownSYNC(BasePose):
     """Top-down pose detectors.
 
     Args:
@@ -37,25 +37,24 @@ class TopDownKLDiv(BasePose):
     """
 
     def __init__(self,
-                 backbone,
-                 backbone_l,
-                 backbone_h,
+                 backbone_front,
+                 backbone_back,
+                 backbone_teacher,
                  neck=None,
                  keypoint_head=None,
-                 keypoint_head_h=None,
+                 keypoint_head_teacher=None,
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None,
-                 pretrained_l=None,
-                 pretrained_h=None,
                  loss_pose=None,
-                 Temp=None):
+                 Temp=10):
         super().__init__()
+        self.train_teacher=1
         self.fp16_enabled = False
         self.Temp = Temp
-        self.backbone = builder.build_backbone(backbone)
-        self.backbone_l = builder.build_backbone(backbone_l)
-        self.backbone_h = builder.build_backbone(backbone_h)
+        self.backbone_front = builder.build_backbone(backbone_front)
+        self.backbone_back = builder.build_backbone(backbone_back)
+        self.backbone_teacher = builder.build_backbone(backbone_teacher)
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
@@ -76,12 +75,10 @@ class TopDownKLDiv(BasePose):
                 keypoint_head['loss_keypoint'] = loss_pose
 
             self.keypoint_head = builder.build_head(keypoint_head)
-            self.keypoint_head_h = builder.build_head(keypoint_head_h)
+            self.keypoint_head_teacher = builder.build_head(keypoint_head_h)
 
 
         self.init_weights(pretrained=pretrained)
-        self.init_weights_l(pretrained=pretrained_l)
-        self.init_weights_h(pretrained=pretrained_h)
 
     @property
     def with_neck(self):
@@ -100,38 +97,6 @@ class TopDownKLDiv(BasePose):
             self.neck.init_weights_teacher()
         if self.with_keypoint:
             self.keypoint_head.init_weights()
-
-    def init_weights_l(self, pretrained=None):
-        ckpt = OrderedDict()
-        ckpt = _load_checkpoint(pretrained)
-        ckpt = ckpt['state_dict']
-        ckpt_b = OrderedDict()
-        for k, v in ckpt.items():
-            if k.startswith('backbone'):
-                k = k[9:]
-                ckpt_b[k] = v
-        load_state_dict(self.backbone_l, ckpt_b)
-
-        self.backbone_l.eval()
-
-    def init_weights_h(self, pretrained=None):
-        ckpt = OrderedDict()
-        ckpt = _load_checkpoint(pretrained)
-        ckpt = ckpt['state_dict']
-        ckpt_b = OrderedDict()
-        ckpt_k = OrderedDict()
-        for k, v in ckpt.items():
-            if k.startswith('backbone'):
-                k = k[9:]
-                ckpt_b[k] = v
-            if k.startswith('keypoint_head'):
-                k = k[14:]
-                ckpt_k[k] = v
-        load_state_dict(self.backbone_h, ckpt_b)
-        load_state_dict(self.keypoint_head_h, ckpt_k)
-
-        self.backbone_h.eval()
-        self.keypoint_head_h.eval()
 
     @auto_fp16(apply_to=('img', ))
     def forward(self,
@@ -181,42 +146,73 @@ class TopDownKLDiv(BasePose):
                 and heatmaps.
         """
         if return_loss:
-            return self.forward_train(img, target, target_weight, img_metas,
-                                      **kwargs)
-        return self.forward_test(
-            img, img_metas, return_heatmap=return_heatmap, **kwargs)
+            losses=dict()
+            for i in self.backbone_teacher.parameters():
+                i.requires_grad = True
+            for i in self.keypoint_head_teacher.parameters():
+                i.requires_grad = True
+            for i in self.backbone_front.parameters():
+                i.requires_grad = False
+            tmp = self.Teacher_Training(img, target, target_weight, img_metas, **kwargs)
+            losses.update(tmp)
+            for i in self.backbone_teacher.parameters():
+                i.requires_grad = False
+            for i in self.keypoint_head_teacher.parameters():
+                i.requires_grad = False
+            for i in self.backbone_front.parameters():
+                i.requires_grad = True
+            tmp = self.Student_Training(img, target, target_weight, img_metas, **kwargs)
+            losses.update(tmp)
+            return losses
+        return self.forward_test(img, img_metas, return_heatmap=return_heatmap, **kwargs)
 
-    def forward_train(self, img, target, target_weight, img_metas, **kwargs):
-        """Defines the computation performed at every call when training."""
-        # student output
-        origin_out = self.backbone(img)
-        output = origin_out[3]
-
-        with torch.no_grad():
-            output_l = self.backbone_l(img)
-            output_h = self.backbone_h(img)
+    def Teacher_Training(self, img, target, target_weight, img_metas, **kwargs):
+        output = self.backbone_teacher(img)
+        st_output = output[1]
+        st_output = self.backbone_back(st_output)
+        st_output = st_output[1]
+        output = output[3]
 
         if self.with_keypoint:
-            output = self.keypoint_head(output)
-            with torch.no_grad():
-                output_h = self.keypoint_head_h(output_h)
+            output = self.keypoint_head_teacher(output)
+            st_output = self.keypoint_head(st_output)
 
         # if return loss
         losses = dict()
         if self.with_keypoint:
             keypoint_losses = dict()
-            #upsm = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            #output_l = upsm(output_l)
-            output_s = origin_out[2]
-            output_l = torch.nn.functional.softmax(output_l/self.Temp, dim=0)
-            output_s = torch.nn.functional.log_softmax(output_s/self.Temp, dim=0)
-            keypoint_losses['s3ts3_KLDiv_loss'] = torch.nn.functional.kl_div(output_s, output_l, reduction = 'batchmean') * 0.2
-            keypoint_losses['r50thr_loss'] = self.keypoint_head.get_loss(output, output_h, target_weight) * 0.3
-            keypoint_losses['r50tgt_loss'] = self.keypoint_head.get_loss(output, target, target_weight) * 0.5
+            keypoint_losses['T_gt_loss'] = self.keypoint_head.get_loss(output, target, target_weight)
+            output = torch.nn.functional.softmax(output/self.Temp, dim=0)
+            _st_output = torch.nn.functional.log_softmax(st_output/self.Temp, dim=0)
+            keypoint_losses['T_kl_loss'] = torch.nn.functional.kl_div(_st_output, th_output, reduction = 'batchmean')
             losses.update(keypoint_losses)
             keypoint_accuracy = dict()
-            keypoint_accuracy['r50thr_accuracy'] = self.keypoint_head.get_accuracy(output, output_h, target_weight)
-            keypoint_accuracy['accuracy'] = self.keypoint_head.get_accuracy(output, target, target_weight)
+            keypoint_accuracy['T_t_accuracy'] = self.keypoint_head.get_accuracy(output, target, target_weight)
+            keypoint_accuracy['T_s_accuracy'] = self.keypoint_head.get_accuracy(st_output, target, target_weight)
+            losses.update(keypoint_accuracy)
+        return losses
+
+    def Student_Training(self, img, target, target_weight, img_metas, **kwargs):
+        th_output = self.backbone_teacher(img)
+        output = self.backbone_front(img)
+        output = self.backbone_back(output)
+
+        if self.with_keypoint:
+            th_output = self.keypoint_head_teacher(th_output[3])
+            st_output = self.keypoint_head(output[1])
+
+        # if return loss
+        losses = dict()
+        if self.with_keypoint:
+            keypoint_losses = dict()
+            keypoint_losses['S_gt_loss'] = self.keypoint_head.get_loss(st_output, target, target_weight)
+            _th_output = torch.nn.functional.softmax(th_output/self.Temp, dim=0)
+            _st_output = torch.nn.functional.log_softmax(st_output/self.Temp, dim=0)
+            keypoint_losses['S_kd_loss'] = torch.nn.functional.kl_div(_st_output, _th_output, reduction = 'batchmean')
+            losses.update(keypoint_losses)
+            keypoint_accuracy = dict()
+            keypoint_accuracy['S_t_accuracy'] = self.keypoint_head.get_accuracy(th_output, target, target_weight)
+            keypoint_accuracy['S_s_accuracy'] = self.keypoint_head.get_accuracy(st_output, target, target_weight)
             losses.update(keypoint_accuracy)
         return losses
 
@@ -229,8 +225,9 @@ class TopDownKLDiv(BasePose):
 
         result = {}
 
-        features = self.backbone(img)
-        features = features[3]
+        features = self.backbone_front(img)
+        features = self.backbone_back(features)
+        features = features[1]
         if self.with_neck:
             features = self.neck(features)
         if self.with_keypoint:
@@ -239,8 +236,9 @@ class TopDownKLDiv(BasePose):
 
         if self.test_cfg.get('flip_test', True):
             img_flipped = img.flip(3)
-            features_flipped = self.backbone(img_flipped)
-            features_flipped = features_flipped[3]
+            features_flipped = self.backbone_front(img_flipped)
+            features_flipped = self.backbone_back(features_flipped)
+            features_flipped = features_flipped[1]
             if self.with_neck:
                 features_flipped = self.neck(features_flipped)
             if self.with_keypoint:

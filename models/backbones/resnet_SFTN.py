@@ -498,6 +498,7 @@ class ResNetSFTN(BaseBackbone):
         1: (Bottleneck, (0, 4, 6, 3)), #SB1_Backbone in_channels = 256
         2: (Bottleneck, (0, 0, 6, 3)), #SB2_Backbone in_channels = 512
         3: (Bottleneck, (0, 0, 0, 3)), #SB3_Backbone in_channels = 1024
+        4: (Bottleneck, (3, 4, 0, 0)),
         18: (BasicBlock, (2, 2, 2, 2)),
         34: (BasicBlock, (3, 4, 6, 3)),
         50: (Bottleneck, (3, 4, 6, 3)),
