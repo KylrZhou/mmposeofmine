@@ -499,6 +499,9 @@ class ResNetSFTN(BaseBackbone):
         2: (Bottleneck, (0, 0, 6, 3)), #SB2_Backbone in_channels = 512
         3: (Bottleneck, (0, 0, 0, 3)), #SB3_Backbone in_channels = 1024
         4: (Bottleneck, (3, 4, 0, 0)),
+        5: (Bottleneck, (0, 4, 0, 0)),
+        6: (Bottleneck, (0, 0, 6, 0)),
+        7: (Bottleneck, (0, 0, 0, 3)),
         18: (BasicBlock, (2, 2, 2, 2)),
         34: (BasicBlock, (3, 4, 6, 3)),
         50: (Bottleneck, (3, 4, 6, 3)),
@@ -700,9 +703,9 @@ class ResNetSFTN(BaseBackbone):
             x = res_layer(x)
             if i in self.out_indices:
                 outs.append(x)
-        if len(outs) == 1:
-            return outs[0]
-        return tuple(outs)
+        #if len(outs) == 1:
+        #    return outs[0]
+        return x
 
     def train(self, mode=True):
         """Convert the model into training mode."""

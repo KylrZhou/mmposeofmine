@@ -477,6 +477,7 @@ class ResNetSYNC(BaseBackbone):
 
     arch_settings = {
         1: (Bottleneck, (3, 4, 0, 0)),
+        2: (Bottleneck, (3, 0, 0, 0)),
         18: (BasicBlock, (2, 2, 2, 2)),
         34: (BasicBlock, (3, 4, 6, 3)),
         50: (Bottleneck, (3, 4, 6, 3)),
