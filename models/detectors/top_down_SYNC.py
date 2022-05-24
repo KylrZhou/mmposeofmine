@@ -200,6 +200,8 @@ class TopDownSYNC(BasePose):
                 i.requires_grad = False
             for i in self.keypoint_head_teacher.parameters():
                 i.requires_grad = False
+            origin_teacher_output = self.backbone_teacher(img)
+            teacher_output = self.keypoint_head_teacher(origin_teacher_output[3])
             origin_student_output = self.backbone_front(img)
             origin_student_output = self.backbone_back(origin_student_output[1])
             student_output = self.keypoint_head(origin_student_output[1])
