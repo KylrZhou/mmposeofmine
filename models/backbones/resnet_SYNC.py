@@ -7,7 +7,6 @@ from mmcv.cnn import (ConvModule, build_conv_layer, build_norm_layer,
                       constant_init, kaiming_init)
 from mmcv.utils.parrots_wrapper import _BatchNorm
 
-import torch
 from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
@@ -421,26 +420,8 @@ class ResLayer(nn.Sequential):
         super().__init__(*layers)
 
 
-class SE_Block(torch.nn.Module):
-    def __init__(self, c, r=16):
-        super().__init__()
-        self.squeeze = torch.nn.AdaptiveAvgPool2d(1)
-        self.excitation = torch.nn.Sequential(
-            torch.nn.Linear(c, c // r, bias=False),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Linear(c // r, c, bias=False),
-            torch.nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        bs, c, _, _ = x.shape
-        y = self.squeeze(x).view(bs, c)
-        y = self.excitation(y).view(bs, c, 1, 1)
-        return x * y.expand_as(x)
-
-
 @BACKBONES.register_module()
-class ResNetSFTN(BaseBackbone):
+class ResNetSYNC(BaseBackbone):
     """ResNet backbone.
 
     Please refer to the `paper <https://arxiv.org/abs/1512.03385>`__ for
@@ -495,10 +476,7 @@ class ResNetSFTN(BaseBackbone):
     """
 
     arch_settings = {
-        1: (Bottleneck, (0, 4, 6, 3)), #SB1_Backbone in_channels = 256
-        2: (Bottleneck, (0, 0, 6, 3)), #SB2_Backbone in_channels = 512
-        3: (Bottleneck, (0, 0, 0, 3)), #SB3_Backbone in_channels = 1024
-        4: (Bottleneck, (3, 4, 0, 0)),
+        1: (Bottleneck, (3, 4, 0, 0)),
         18: (BasicBlock, (2, 2, 2, 2)),
         34: (BasicBlock, (3, 4, 6, 3)),
         50: (Bottleneck, (3, 4, 6, 3)),
@@ -526,9 +504,8 @@ class ResNetSFTN(BaseBackbone):
                  with_cp=False,
                  zero_init_residual=True):
         # Protect mutable default arguments
-        super().__init__()
-        #self.SE = SE_Block(c=in_channels)
         norm_cfg = copy.deepcopy(norm_cfg)
+        super().__init__()
         if depth not in self.arch_settings:
             raise KeyError(f'invalid depth {depth} for resnet')
         self.depth = depth
@@ -560,27 +537,26 @@ class ResNetSFTN(BaseBackbone):
         _in_channels = stem_channels
         _out_channels = base_channels * self.expansion
         for i, num_blocks in enumerate(self.stage_blocks):
-            if num_blocks != 0:
-                stride = strides[i]
-                dilation = dilations[i]
-                res_layer = self.make_res_layer(
-                    block=self.block,
-                    num_blocks=num_blocks,
-                    in_channels=_in_channels,
-                    out_channels=_out_channels,
-                    expansion=self.expansion,
-                    stride=stride,
-                    dilation=dilation,
-                    style=self.style,
-                    avg_down=self.avg_down,
-                    with_cp=with_cp,
-                    conv_cfg=conv_cfg,
-                    norm_cfg=norm_cfg)
-                _in_channels = _out_channels
-                _out_channels *= 2
-                layer_name = f'layer{i + 1}'
-                self.add_module(layer_name, res_layer)
-                self.res_layers.append(layer_name)
+            stride = strides[i]
+            dilation = dilations[i]
+            res_layer = self.make_res_layer(
+                block=self.block,
+                num_blocks=num_blocks,
+                in_channels=_in_channels,
+                out_channels=_out_channels,
+                expansion=self.expansion,
+                stride=stride,
+                dilation=dilation,
+                style=self.style,
+                avg_down=self.avg_down,
+                with_cp=with_cp,
+                conv_cfg=conv_cfg,
+                norm_cfg=norm_cfg)
+            _in_channels = _out_channels
+            _out_channels *= 2
+            layer_name = f'layer{i + 1}'
+            self.add_module(layer_name, res_layer)
+            self.res_layers.append(layer_name)
 
         self._freeze_stages()
 
@@ -684,7 +660,6 @@ class ResNetSFTN(BaseBackbone):
 
     def forward(self, x):
         """Forward function."""
-        """
         if self.deep_stem:
             x = self.stem(x)
         else:
@@ -692,9 +667,7 @@ class ResNetSFTN(BaseBackbone):
             x = self.norm1(x)
             x = self.relu(x)
         x = self.maxpool(x)
-        """
         outs = []
-        #x = self.SE(x)
         for i, layer_name in enumerate(self.res_layers):
             res_layer = getattr(self, layer_name)
             x = res_layer(x)
