@@ -83,7 +83,7 @@ class TopDownSYNCv3(BasePose):
             self.keypoint_head = builder.build_head(keypoint_head)
             self.keypoint_head_teacher = builder.build_head(keypoint_head_teacher)
 
-        self.init_weights_l(pretrained=pretrained)
+        self.init_weights(pretrained=pretrained)
 
     @property
     def with_neck(self):
@@ -168,6 +168,8 @@ class TopDownSYNCv3(BasePose):
                 Otherwise, return predicted poses, boxes, image paths \
                 and heatmaps.
         """
+        for i in self.backbone:
+            print(i)
         if return_loss:
             return self.forward_train(img, target, target_weight, img_metas,
                                       **kwargs)
@@ -176,9 +178,8 @@ class TopDownSYNCv3(BasePose):
 
     def forward_train(self, img, target, target_weight, img_metas, **kwargs):
         """Defines the computation performed at every call when training."""
-        with torch.no_grad():
-            origin_output = self.backbone(img)
-            output = self.keypoint_head_teacher(origin_output[3])
+        origin_output = self.backbone(img)
+        output = self.keypoint_head_teacher(origin_output[3])
         #Student to GT
         Stage1_output = self.backbone_stage1(img)
         Stage1_output = self.backbone_stage2(Stage1_output)
@@ -204,18 +205,18 @@ class TopDownSYNCv3(BasePose):
             keypoint_losses = dict()
             keypoint_accuracy = dict()
             keypoint_losses['st2gt_loss'] = self.keypoint_head.get_loss(Stage1_heatmap, target, target_weight)
+            keypoint_losses['th2gt_loss'] = self.keypoint_head.get_loss(output, target, target_weight)
             Stage1_KL_Loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(Stage1_heatmap/self.Temp, dim=0), torch.nn.functional.softmax(output/self.Temp, dim=0))
             Stage2_KL_Loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(Stage2_heatmap/self.Temp, dim=0), torch.nn.functional.softmax(output/self.Temp, dim=0))
             Stage3_KL_Loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(Stage3_heatmap/self.Temp, dim=0), torch.nn.functional.softmax(output/self.Temp, dim=0))
             Stage4_KL_Loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(Stage4_heatmap/self.Temp, dim=0), torch.nn.functional.softmax(output/self.Temp, dim=0))
             keypoint_losses['KL_loss'] = (Stage1_KL_Loss + Stage1_KL_Loss + Stage1_KL_Loss + Stage1_KL_Loss) / 4
-            """KL_Weight = 0.01
             CE = torch.nn.CrossEntropyLoss()
             Stage1_CE_Loss = CE(Stage1_heatmap, target)
             Stage2_CE_Loss = CE(Stage2_heatmap, target)
             Stage3_CE_Loss = CE(Stage3_heatmap, target)
             Stage4_CE_Loss = CE(Stage4_heatmap, target)
-            keypoint_losses['CE_loss'] = (Stage1_CE_Loss + Stage2_CE_Loss + Stage3_CE_Loss + Stage4_CE_Loss) / 4"""
+            keypoint_losses['CE_loss'] = (Stage1_CE_Loss + Stage2_CE_Loss + Stage3_CE_Loss + Stage4_CE_Loss) / 4
             losses.update(keypoint_losses)
             keypoint_accuracy['acc_pose'] = self.keypoint_head.get_accuracy(Stage1_heatmap, target, target_weight)
             keypoint_accuracy['th_acc'] = self.keypoint_head.get_accuracy(output, target, target_weight)

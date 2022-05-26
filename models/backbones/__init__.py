@@ -25,12 +25,13 @@ from .vgg import VGG
 from .vipnas_mbv3 import ViPNAS_MobileNetV3
 from .vipnas_resnet import ViPNAS_ResNet
 from .resnet_SFTN import ResNetSFTN
-from .resnet_SYNC import ResNetSYNC
+from .resnet_SYNC1 import ResNetSYNC1
+from .resnet_SYNC2 import ResNetSYNC2
 
 __all__ = [
     'AlexNet', 'HourglassNet', 'HourglassAENet', 'HRNet', 'MobileNetV2',
     'MobileNetV3', 'RegNet', 'ResNet', 'ResNetV1d', 'ResNeXt', 'SCNet',
     'SEResNet', 'SEResNeXt', 'ShuffleNetV1', 'ShuffleNetV2', 'CPM', 'RSN',
     'MSPN', 'ResNeSt', 'VGG', 'TCN', 'ViPNAS_ResNet', 'ViPNAS_MobileNetV3',
-    'LiteHRNet', 'V2VNet', 'HRFormer', 'ResNetSFTN', 'ResNetSYNC'
+    'LiteHRNet', 'V2VNet', 'HRFormer', 'ResNetSFTN', 'ResNetSYNC1', 'ResNetSYNC2'
 ]
