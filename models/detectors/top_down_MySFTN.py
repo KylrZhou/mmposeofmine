@@ -3,6 +3,7 @@ import warnings
 
 import mmcv
 import numpy as np
+import torch
 from mmcv.image import imwrite
 from mmcv.utils.misc import deprecated_api_warning
 from mmcv.visualization.image import imshow
@@ -11,7 +12,6 @@ from mmpose.core import imshow_bboxes, imshow_keypoints
 from .. import builder
 from ..builder import POSENETS
 from .base import BasePose
-import torch
 
 try:
     from mmcv.runner import auto_fp16
@@ -25,7 +25,7 @@ from mmcv.runner.checkpoint import _load_checkpoint, load_state_dict
 import torch
 
 @POSENETS.register_module()
-class TopDownSYNCv3(BasePose):
+class TopDownDistill(BasePose):
     """Top-down pose detectors.
 
     Args:
@@ -40,26 +40,21 @@ class TopDownSYNCv3(BasePose):
 
     def __init__(self,
                  backbone,
-                 backbone_stage1=None,
-                 backbone_stage2=None,
-                 backbone_stage3=None,
-                 backbone_stage4=None,
+                 backbone_Large,             #include 152 stage 1, 2, 3
                  neck=None,
                  keypoint_head=None,
-                 keypoint_head_teacher=None,
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None,
-                 loss_pose=None):
+                 pretrained_teacher=None,
+                 loss_pose=None,
+                 alpha=0.5):
         super().__init__()
+        self.alpha = alpha
         self.fp16_enabled = False
-        self.Temp = 1
 
         self.backbone = builder.build_backbone(backbone)
-        self.backbone_stage1 = builder.build_backbone(backbone_stage1)
-        self.backbone_stage2 = builder.build_backbone(backbone_stage2)
-        self.backbone_stage3 = builder.build_backbone(backbone_stage3)
-        self.backbone_stage4 = builder.build_backbone(backbone_stage4)
+        self.backbone_teacher = builder.build_backbone(backbone_teacher)#build teacher's backbone 
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
@@ -79,11 +74,14 @@ class TopDownSYNCv3(BasePose):
                     ' for more information.', DeprecationWarning)
                 keypoint_head['loss_keypoint'] = loss_pose
 
-
             self.keypoint_head = builder.build_head(keypoint_head)
-            self.keypoint_head_teacher = builder.build_head(keypoint_head_teacher)
+            self.keypoint_head_teacher = builder.build_head(keypoint_head_teacher)#build teacher's keypoint_head
 
         self.init_weights(pretrained=pretrained)
+        self.init_weights_teacher(pretrained=pretrained_teacher)
+        #init teacher net's parameters
+        
+        #fix teacher net's parameters
 
     @property
     def with_neck(self):
@@ -95,30 +93,32 @@ class TopDownSYNCv3(BasePose):
         """Check if has keypoint_head."""
         return hasattr(self, 'keypoint_head')
 
+
     def init_weights(self, pretrained=None):
         """Weight initialization for model."""
         self.backbone.init_weights(pretrained)
-        self.keypoint_head_teacher.init_weights()
-        self.backbone.eval()
-        self.keypoint_head_teacher.eval()
+        if self.with_neck:
+            self.neck.init_weights_teacher()
+        if self.with_keypoint:
+            self.keypoint_head.init_weights()
 
-    def init_weights_l(self, pretrained=None):
+    def init_weights_teacher(self, pretrained=None):
         ckpt = OrderedDict()
         ckpt = _load_checkpoint(pretrained)
         ckpt = ckpt['state_dict']
         ckpt_b = OrderedDict()
         ckpt_k = OrderedDict()
-        for k, v in ckpt.items():
+        for k,v in ckpt.items():
             if k.startswith('backbone'):
                 k = k[9:]
                 ckpt_b[k] = v
             if k.startswith('keypoint_head'):
                 k = k[14:]
                 ckpt_k[k] = v
-        load_state_dict(self.backbone, ckpt_b)
+        load_state_dict(self.backbone_teacher, ckpt_b)
         load_state_dict(self.keypoint_head_teacher, ckpt_k)
 
-        self.backbone.eval()
+        self.backbone_teacher.eval()
         self.keypoint_head_teacher.eval()
 
     @auto_fp16(apply_to=('img', ))
@@ -169,55 +169,38 @@ class TopDownSYNCv3(BasePose):
                 and heatmaps.
         """
         if return_loss:
-            return self.forward_train(img, target, target_weight, img_metas,
+            return self.forward_train(img, target, target_weight, img_metas, self.alpha,
                                       **kwargs)
         return self.forward_test(
             img, img_metas, return_heatmap=return_heatmap, **kwargs)
 
-    def forward_train(self, img, target, target_weight, img_metas, **kwargs):
+    def forward_train(self, img, target, target_weight, img_metas, alpha=0.5, **kwargs):
         """Defines the computation performed at every call when training."""
-        origin_output = self.backbone(img)
-        output = self.keypoint_head_teacher(origin_output[3])
-        #Student to GT
-        Stage1_output = self.backbone_stage1(img)
-        Stage1_output = self.backbone_stage2(Stage1_output)
-        Stage1_output = self.backbone_stage3(Stage1_output)
-        Stage1_output = self.backbone_stage4(Stage1_output)
-        Stage1_heatmap = self.keypoint_head(Stage1_output)
-        #Stage1 KD
-        Stage2_output = self.backbone_stage2(origin_output[0])
-        Stage2_output = self.backbone_stage3(Stage2_output)
-        Stage2_output = self.backbone_stage4(Stage2_output)
-        Stage2_heatmap = self.keypoint_head(Stage2_output)
-        #Stage2 KD
-        Stage3_output = self.backbone_stage3(origin_output[1])
-        Stage3_output = self.backbone_stage4(Stage3_output)
-        Stage3_heatmap = self.keypoint_head(Stage3_output)
-        #Stage3 KD
-        Stage4_output = self.backbone_stage4(origin_output[2])
-        Stage4_heatmap = self.keypoint_head(Stage4_output)
+        output = self.backbone(img)
+        with torch.no_grad():
+            output_teacher = self.backbone_teacher(img)        #input img to teacher's backbone
+        if self.with_neck:
+            output = self.neck(output)
+        if self.with_keypoint:
+            output = self.keypoint_head(output)
+            with torch.no_grad():
+                output_teacher = self.keypoint_head_teacher(output_teacher)
+                                                           #input data to the teacher's head
 
         # if return loss
         losses = dict()
         if self.with_keypoint:
             keypoint_losses = dict()
-            keypoint_accuracy = dict()
-            keypoint_losses['st2gt_loss'] = self.keypoint_head.get_loss(Stage1_heatmap, target, target_weight)
-            keypoint_losses['th2gt_loss'] = self.keypoint_head.get_loss(output, target, target_weight)
-            Stage1_KL_Loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(Stage1_heatmap/self.Temp, dim=0), torch.nn.functional.softmax(output/self.Temp, dim=0))
-            Stage2_KL_Loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(Stage2_heatmap/self.Temp, dim=0), torch.nn.functional.softmax(output/self.Temp, dim=0))
-            Stage3_KL_Loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(Stage3_heatmap/self.Temp, dim=0), torch.nn.functional.softmax(output/self.Temp, dim=0))
-            Stage4_KL_Loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(Stage4_heatmap/self.Temp, dim=0), torch.nn.functional.softmax(output/self.Temp, dim=0))
-            keypoint_losses['KL_loss'] = (Stage1_KL_Loss + Stage1_KL_Loss + Stage1_KL_Loss + Stage1_KL_Loss) / 4
-            CE = torch.nn.CrossEntropyLoss()
-            Stage1_CE_Loss = CE(Stage1_heatmap, target)
-            Stage2_CE_Loss = CE(Stage2_heatmap, target)
-            Stage3_CE_Loss = CE(Stage3_heatmap, target)
-            Stage4_CE_Loss = CE(Stage4_heatmap, target)
-            keypoint_losses['CE_loss'] = (Stage1_CE_Loss + Stage2_CE_Loss + Stage3_CE_Loss + Stage4_CE_Loss) / 4
+            keypoint_losses['student2gt_loss'] = self.keypoint_head.get_loss(output, target, target_weight)
+            keypoint_losses['student2teacher_loss'] = self.keypoint_head_teacher.get_loss(output, output_teacher, target_weight)                     #get student to teacher loss
+            keypoint_losses['total_loss'] = keypoint_losses['student2teacher_loss'] * alpha + keypoint_losses['student2gt_loss'] * (1-alpha)#get total loss
+            keypoint_losses['heatmap_loss'] = keypoint_losses['total_loss']
             losses.update(keypoint_losses)
-            keypoint_accuracy['acc_pose'] = self.keypoint_head.get_accuracy(Stage1_heatmap, target, target_weight)
-            keypoint_accuracy['th_acc'] = self.keypoint_head.get_accuracy(output, target, target_weight)
+            keypoint_accuracy = dict()
+            keypoint_accuracy['student2gt_accuracy'] = self.keypoint_head.get_accuracy(output, target, target_weight)
+            keypoint_accuracy['student2teacher_accuracy'] = self.keypoint_head.get_accuracy(output, output_teacher, target_weight)
+            keypoint_accuracy['total_accuracy'] = keypoint_accuracy['student2teacher_accuracy'] * alpha + keypoint_accuracy['student2gt_accuracy'] * (1-alpha)#get total accuracy
+            keypoint_accuracy['acc_pose'] = keypoint_accuracy['total_accuracy']
             losses.update(keypoint_accuracy)
 
         return losses
@@ -231,10 +214,7 @@ class TopDownSYNCv3(BasePose):
 
         result = {}
 
-        features = self.backbone_stage1(img)
-        features = self.backbone_stage2(features)
-        features = self.backbone_stage3(features)
-        features = self.backbone_stage4(features)
+        features = self.backbone(img)
         if self.with_neck:
             features = self.neck(features)
         if self.with_keypoint:
@@ -243,10 +223,7 @@ class TopDownSYNCv3(BasePose):
 
         if self.test_cfg.get('flip_test', True):
             img_flipped = img.flip(3)
-            features_flipped = self.backbone_stage1(img_flipped)
-            features_flipped = self.backbone_stage2(features_flipped)
-            features_flipped = self.backbone_stage3(features_flipped)
-            features_flipped = self.backbone_stage4(features_flipped)
+            features_flipped = self.backbone(img_flipped)
             if self.with_neck:
                 features_flipped = self.neck(features_flipped)
             if self.with_keypoint:
