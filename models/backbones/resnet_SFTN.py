@@ -506,7 +506,10 @@ class ResNetSFTN(BaseBackbone):
         34: (BasicBlock, (3, 4, 6, 3)),
         50: (Bottleneck, (3, 4, 6, 3)),
         101: (Bottleneck, (3, 4, 23, 3)),
-        152: (Bottleneck, (3, 8, 36, 3))
+        152: (Bottleneck, (3, 8, 36, 3)),
+        1521:(Bottleneck, (0, 8, 36, 3)),
+        1522:(Bottleneck, (0, 0, 36, 3)),
+        1523:(Bottleneck, (0, 0, 0, 3)),
     }
 
     def __init__(self,

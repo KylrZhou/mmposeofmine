@@ -19,10 +19,12 @@ from .top_down_SFTN import TopDownSFTN
 from .top_down_SFTNSEST import TopDownSFTNSEST
 from .top_down_SYNC_v2 import TopDownSYNCv2
 from .top_down_SYNC_v3 import TopDownSYNCv3
+from .top_down_VERSE import TopDownVERSE
 __all__ = [
     'TopDown', 'AssociativeEmbedding', 'ParametricMesh', 'MultiTask',
     'PoseLifter', 'Interhand3D', 'PoseWarper', 'DetectAndRegress',
     'VoxelCenterDetector', 'VoxelSinglePose', 'TopDownDistill',
     'TopDownKDNAS', 'TopDownKDNASv2', 'TopDownKD2CONV', 'TopDownGTRES',
-    'TopDownSYNC', 'TopDownKDSE', 'TopDownSFTN', 'TopDownSFTNSEST', 'TopDownSYNCv2', 'TopDownSYNCv3'
+    'TopDownSYNC', 'TopDownKDSE', 'TopDownSFTN', 'TopDownSFTNSEST', 'TopDownSYNCv2', 'TopDownSYNCv3',
+    'TopDownVERSE',
 ]
