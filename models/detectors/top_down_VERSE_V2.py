@@ -22,7 +22,7 @@ except ImportError:
 
 
 @POSENETS.register_module()
-class TopDownVERSE(BasePose):
+class TopDownVERSEV2(BasePose):
     """Top-down pose detectors.
 
     Args:
@@ -39,12 +39,12 @@ class TopDownVERSE(BasePose):
                  backbone,
                  T1_Backbone=None, #Student Branch 1
                  T2_Backbone=None, #Student Branch 2
-                 T3_Backbone=None, #Student Branch 3
+                 #T3_Backbone=None, #Student Branch 3
                  neck=None,
                  keypoint_head=None,
                  T1_keypoint_head=None, #Student Branch 1 Keypoint Head
                  T2_keypoint_head=None, #Student Branch 2 Keypoint Head
-                 T3_keypoint_head=None, #Student Branch 3 Keypoint Head
+                 #T3_keypoint_head=None, #Student Branch 3 Keypoint Head
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None,
@@ -55,7 +55,7 @@ class TopDownVERSE(BasePose):
         self.backbone = builder.build_backbone(backbone)
         self.T1_Backbone = builder.build_backbone(T1_Backbone)
         self.T2_Backbone = builder.build_backbone(T2_Backbone)
-        self.T3_Backbone = builder.build_backbone(T3_Backbone)
+        #self.T3_Backbone = builder.build_backbone(T3_Backbone)
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
@@ -78,7 +78,7 @@ class TopDownVERSE(BasePose):
             self.keypoint_head = builder.build_head(keypoint_head)
             self.T1_keypoint_head = builder.build_head(T1_keypoint_head) #Student Branch 1 Keypoint Head
             self.T2_keypoint_head = builder.build_head(T2_keypoint_head) #Student Branch 2 Keypoint Head
-            self.T3_keypoint_head = builder.build_head(T3_keypoint_head) #Student Branch 3 Keypoint Head
+            #self.T3_keypoint_head = builder.build_head(T3_keypoint_head) #Student Branch 3 Keypoint Head
 
         self.init_weights(pretrained=pretrained)
 
@@ -158,11 +158,11 @@ class TopDownVERSE(BasePose):
         origin_output = self.backbone(img)
         T1_Output = self.T1_Backbone(origin_output[0])
         T2_Output = self.T2_Backbone(origin_output[1])
-        T3_Output = self.T3_Backbone(origin_output[2])
+        #T3_Output = self.T3_Backbone(origin_output[2])
         output = self.keypoint_head(origin_output[3])
         T1_Output = self.T1_keypoint_head(T1_Output)
         T2_Output = self.T2_keypoint_head(T2_Output)
-        T3_Output = self.T3_keypoint_head(T3_Output)
+        #T3_Output = self.T3_keypoint_head(T3_Output)
 
         # if return loss
         losses = dict()
@@ -170,18 +170,21 @@ class TopDownVERSE(BasePose):
             keypoint_losses = dict()
             keypoint_accuracy = dict()
             keypoint_losses['GT_loss'] = self.keypoint_head.get_loss(output, target, target_weight) / 3
-            T1_KL_Loss = self.T3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T1_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
-            T2_KL_Loss = self.T3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T2_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
-            T3_KL_Loss = self.T3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T3_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
-            keypoint_losses['KL_loss'] = (T1_KL_Loss + T2_KL_Loss + T3_KL_Loss) / 9
-            T1_CE_Loss = self.T3_keypoint_head.get_loss_CE(T1_Output, target) * 0.01
-            T2_CE_Loss = self.T3_keypoint_head.get_loss_CE(T2_Output, target) * 0.01
-            T3_CE_Loss = self.T3_keypoint_head.get_loss_CE(T3_Output, target) * 0.01
-            keypoint_losses['CE_loss'] = (T1_CE_Loss + T2_CE_Loss + T3_CE_Loss) / 9
+            keypoint_losses['T1_GT_loss'] = self.keypoint_head.get_loss(T1_Output, target, target_weight) / 3
+            keypoint_losses['T2_GT_loss'] = self.keypoint_head.get_loss(T2_Output, target, target_weight) / 3
+            #keypoint_losses['T3_GT_loss'] = self.keypoint_head.get_loss(T3_Output, target, target_weight) / 3
+            T1_KL_Loss = self.T2_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T1_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
+            T2_KL_Loss = self.T2_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T2_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
+            #T3_KL_Loss = self.T2_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T3_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
+            keypoint_losses['KL_loss'] = (T1_KL_Loss + T2_KL_Loss) / 4
+            T1_CE_Loss = self.T2_keypoint_head.get_loss_CE(T1_Output, target) * 0.01
+            T2_CE_Loss = self.T2_keypoint_head.get_loss_CE(T2_Output, target) * 0.01
+            #T3_CE_Loss = self.T2_keypoint_head.get_loss_CE(T3_Output, target) * 0.01
+            keypoint_losses['CE_loss'] = (T1_CE_Loss + T2_CE_Loss) / 4
             losses.update(keypoint_losses)
             keypoint_accuracy['T1_acc'] = self.keypoint_head.get_accuracy(T1_Output, target, target_weight)
             keypoint_accuracy['T2_acc'] = self.keypoint_head.get_accuracy(T2_Output, target, target_weight)
-            keypoint_accuracy['T3_acc'] = self.keypoint_head.get_accuracy(T3_Output, target, target_weight)
+            #keypoint_accuracy['T3_acc'] = self.keypoint_head.get_accuracy(T3_Output, target, target_weight)
             keypoint_accuracy['acc_pose'] = self.keypoint_head.get_accuracy(output, target, target_weight)
             losses.update(keypoint_accuracy)
 

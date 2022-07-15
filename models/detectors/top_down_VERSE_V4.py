@@ -22,7 +22,7 @@ except ImportError:
 
 
 @POSENETS.register_module()
-class TopDownVERSE(BasePose):
+class TopDownVERSEV4(BasePose):
     """Top-down pose detectors.
 
     Args:
@@ -38,13 +38,8 @@ class TopDownVERSE(BasePose):
     def __init__(self,
                  backbone,
                  T1_Backbone=None, #Student Branch 1
-                 T2_Backbone=None, #Student Branch 2
-                 T3_Backbone=None, #Student Branch 3
                  neck=None,
                  keypoint_head=None,
-                 T1_keypoint_head=None, #Student Branch 1 Keypoint Head
-                 T2_keypoint_head=None, #Student Branch 2 Keypoint Head
-                 T3_keypoint_head=None, #Student Branch 3 Keypoint Head
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None,
@@ -54,8 +49,6 @@ class TopDownVERSE(BasePose):
 
         self.backbone = builder.build_backbone(backbone)
         self.T1_Backbone = builder.build_backbone(T1_Backbone)
-        self.T2_Backbone = builder.build_backbone(T2_Backbone)
-        self.T3_Backbone = builder.build_backbone(T3_Backbone)
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
@@ -76,11 +69,11 @@ class TopDownVERSE(BasePose):
                 keypoint_head['loss_keypoint'] = loss_pose
 
             self.keypoint_head = builder.build_head(keypoint_head)
-            self.T1_keypoint_head = builder.build_head(T1_keypoint_head) #Student Branch 1 Keypoint Head
-            self.T2_keypoint_head = builder.build_head(T2_keypoint_head) #Student Branch 2 Keypoint Head
-            self.T3_keypoint_head = builder.build_head(T3_keypoint_head) #Student Branch 3 Keypoint Head
 
         self.init_weights(pretrained=pretrained)
+        self.Timer = 1921
+        self.Shift = 0
+        self.CE = torch.nn.CrossEntropyLoss()
 
     @property
     def with_neck(self):
@@ -148,44 +141,61 @@ class TopDownVERSE(BasePose):
                 and heatmaps.
         """
         if return_loss:
-            return self.forward_train(img, target, target_weight, img_metas,
+            if self.Timer>0:
+                self.Timer -= 1
+            else:
+                self.Timer = 1920
+                if self.Shift == 1:
+                    self.Shift = 0
+                else:
+                    self.Shift = 1
+            Shift = self.Shift
+            return self.forward_train(img, target, target_weight, img_metas, Shift,
                                       **kwargs)
         return self.forward_test(
             img, img_metas, return_heatmap=return_heatmap, **kwargs)
 
-    def forward_train(self, img, target, target_weight, img_metas, **kwargs):
+    def forward_train(self, img, target, target_weight, img_metas, Shift,**kwargs):
         """Defines the computation performed at every call when training."""
-        origin_output = self.backbone(img)
-        T1_Output = self.T1_Backbone(origin_output[0])
-        T2_Output = self.T2_Backbone(origin_output[1])
-        T3_Output = self.T3_Backbone(origin_output[2])
-        output = self.keypoint_head(origin_output[3])
-        T1_Output = self.T1_keypoint_head(T1_Output)
-        T2_Output = self.T2_keypoint_head(T2_Output)
-        T3_Output = self.T3_keypoint_head(T3_Output)
-
-        # if return loss
-        losses = dict()
-        if self.with_keypoint:
+        #if self.Timer == 'Teacher':
+        if Shift == 1:
+            #print(1,self.Timer)
+            #self.T1_Backbone.train()
+            origin_output = self.backbone(img)
+            T1_Origin = self.T1_Backbone(origin_output[0])
+            T1_Output = self.keypoint_head(T1_Origin)
+            losses = dict()
             keypoint_losses = dict()
             keypoint_accuracy = dict()
-            keypoint_losses['GT_loss'] = self.keypoint_head.get_loss(output, target, target_weight) / 3
-            T1_KL_Loss = self.T3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T1_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
-            T2_KL_Loss = self.T3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T2_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
-            T3_KL_Loss = self.T3_keypoint_head.get_loss_KL(torch.nn.functional.log_softmax(T3_Output/10, dim=0), torch.nn.functional.softmax(output/10, dim=0)) * 10
-            keypoint_losses['KL_loss'] = (T1_KL_Loss + T2_KL_Loss + T3_KL_Loss) / 9
-            T1_CE_Loss = self.T3_keypoint_head.get_loss_CE(T1_Output, target) * 0.01
-            T2_CE_Loss = self.T3_keypoint_head.get_loss_CE(T2_Output, target) * 0.01
-            T3_CE_Loss = self.T3_keypoint_head.get_loss_CE(T3_Output, target) * 0.01
-            keypoint_losses['CE_loss'] = (T1_CE_Loss + T2_CE_Loss + T3_CE_Loss) / 9
-            losses.update(keypoint_losses)
+            keypoint_losses['GT_loss'] = 0.0
+            keypoint_losses['ST2TH_loss'] = 0.0
+            keypoint_losses['T1_GT_loss'] = self.keypoint_head.get_loss(T1_Output, target, target_weight)
             keypoint_accuracy['T1_acc'] = self.keypoint_head.get_accuracy(T1_Output, target, target_weight)
-            keypoint_accuracy['T2_acc'] = self.keypoint_head.get_accuracy(T2_Output, target, target_weight)
-            keypoint_accuracy['T3_acc'] = self.keypoint_head.get_accuracy(T3_Output, target, target_weight)
-            keypoint_accuracy['acc_pose'] = self.keypoint_head.get_accuracy(output, target, target_weight)
+            keypoint_accuracy['Traning_Type'] = 0.0
+            losses.update(keypoint_losses)
             losses.update(keypoint_accuracy)
-
-        return losses
+            return losses
+        elif Shift == 0:
+            #print(0,self.Timer)
+            #self.T1_Backbone.eval()
+            origin_output = self.backbone(img)
+            output = self.keypoint_head(origin_output[3])
+            T1_Origin = self.T1_Backbone(origin_output[0])
+            T1_Output = self.keypoint_head(T1_Origin)
+            losses = dict()
+            keypoint_losses = dict()
+            keypoint_accuracy = dict()
+            keypoint_losses['GT_loss'] = self.keypoint_head.get_loss(output, target, target_weight)
+            XX = torch.nn.functional.log_softmax(output, dim=-1)
+            YY = torch.nn.functional.softmax(T1_Output, dim=-1)
+            #keypoint_losses['ST2TH_loss'] = torch.nn.functional.kl_div(XX, YY,reduction = 'batchmean')
+            keypoint_losses['T1_GT_loss'] = 0.0
+            keypoint_accuracy['acc_poss'] = self.keypoint_head.get_accuracy(output, target, target_weight)
+            keypoint_accuracy['Traning_Type'] = 1.0
+            losses.update(keypoint_losses)
+            losses.update(keypoint_accuracy)
+            return losses
+        
 
     def forward_test(self, img, img_metas, return_heatmap=False, **kwargs):
         """Defines the computation performed at every call when testing."""
