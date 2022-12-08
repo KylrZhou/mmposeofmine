@@ -46,7 +46,7 @@ def fliplr_joints(joints_3d, joints_3d_visible, img_width, flip_pairs):
 
     # Flip horizontally
     joints_3d_flipped[:, 0] = img_width - 1 - joints_3d_flipped[:, 0]
-    joints_3d_flipped = joints_3d_flipped * joints_3d_visible_flipped
+    joints_3d_flipped = joints_3d_flipped * (joints_3d_visible_flipped > 0)
 
     return joints_3d_flipped, joints_3d_visible_flipped
 
@@ -187,7 +187,7 @@ def transform_preds(coords, center, scale, output_size, use_udp=False):
         scale_x = scale[0] / output_size[0]
         scale_y = scale[1] / output_size[1]
 
-    target_coords = np.ones_like(coords)
+    target_coords = coords.copy()
     target_coords[:, 0] = coords[:, 0] * scale_x + center[0] - scale[0] * 0.5
     target_coords[:, 1] = coords[:, 1] * scale_y + center[1] - scale[1] * 0.5
 

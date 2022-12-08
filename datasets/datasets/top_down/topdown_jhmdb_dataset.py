@@ -127,8 +127,8 @@ class TopDownJhmdbDataset(TopDownCocoDataset):
             y -= 1
             x1 = max(0, x)
             y1 = max(0, y)
-            x2 = min(width - 1, x1 + max(0, w - 1))
-            y2 = min(height - 1, y1 + max(0, h - 1))
+            x2 = min(width - 1, x1 + max(0, w))
+            y2 = min(height - 1, y1 + max(0, h))
             if ('area' not in obj or obj['area'] > 0) and x2 > x1 and y2 > y1:
                 obj['clean_bbox'] = [x1, y1, x2 - x1, y2 - y1]
                 valid_objs.append(obj)
@@ -153,13 +153,9 @@ class TopDownJhmdbDataset(TopDownCocoDataset):
             joints_3d[:, :2] = keypoints[:, :2] - 1
             joints_3d_visible[:, :2] = np.minimum(1, keypoints[:, 2:3])
 
-            center, scale = self._xywh2cs(*obj['clean_bbox'][:4])
-
             image_file = osp.join(self.img_prefix, self.id2name[img_id])
             rec.append({
                 'image_file': image_file,
-                'center': center,
-                'scale': scale,
                 'bbox': obj['clean_bbox'][:4],
                 'rotation': 0,
                 'joints_3d': joints_3d,

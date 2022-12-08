@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 import mmcv
 import numpy as np
+import torch
 from mmcv.parallel import DataContainer as DC
 from mmcv.utils import build_from_cfg
 from numpy import random
@@ -27,11 +28,18 @@ class ToTensor:
         results (dict): contain all information about training.
     """
 
+    def __init__(self, device='cpu'):
+        self.device = device
+
+    def _to_tensor(self, x):
+        return torch.from_numpy(x.astype('float32')).permute(2, 0, 1).to(
+            self.device).div_(255.0)
+
     def __call__(self, results):
         if isinstance(results['img'], (list, tuple)):
-            results['img'] = [F.to_tensor(img) for img in results['img']]
+            results['img'] = [self._to_tensor(img) for img in results['img']]
         else:
-            results['img'] = F.to_tensor(results['img'])
+            results['img'] = self._to_tensor(results['img'])
 
         return results
 
@@ -54,12 +62,12 @@ class NormalizeTensor:
     def __call__(self, results):
         if isinstance(results['img'], (list, tuple)):
             results['img'] = [
-                F.normalize(img, mean=self.mean, std=self.std)
+                F.normalize(img, mean=self.mean, std=self.std, inplace=True)
                 for img in results['img']
             ]
         else:
             results['img'] = F.normalize(
-                results['img'], mean=self.mean, std=self.std)
+                results['img'], mean=self.mean, std=self.std, inplace=True)
 
         return results
 
@@ -253,8 +261,8 @@ class Albumentation:
             if albumentations is None:
                 raise RuntimeError('albumentations is not installed')
             if not hasattr(albumentations.augmentations.transforms, obj_type):
-                warnings.warn('{obj_type} is not pixel-level transformations. '
-                              'Please use with caution.')
+                warnings.warn(f'{obj_type} is not pixel-level transformations.'
+                              ' Please use with caution.')
             obj_cls = getattr(albumentations, obj_type)
         else:
             raise TypeError(f'type must be a str, but got {type(obj_type)}')

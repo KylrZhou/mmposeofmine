@@ -66,8 +66,8 @@ class TopDown(BasePose):
                 keypoint_head['loss_keypoint'] = loss_pose
 
             self.keypoint_head = builder.build_head(keypoint_head)
-
-        self.init_weights(pretrained=pretrained)
+        self.pretrained = pretrained
+        self.init_weights()
 
     @property
     def with_neck(self):
@@ -81,9 +81,11 @@ class TopDown(BasePose):
 
     def init_weights(self, pretrained=None):
         """Weight initialization for model."""
-        self.backbone.init_weights(pretrained)
+        if pretrained is not None:
+            self.pretrained = pretrained
+        self.backbone.init_weights(self.pretrained)
         if self.with_neck:
-            self.neck.init_weights_teacher()
+            self.neck.init_weights()
         if self.with_keypoint:
             self.keypoint_head.init_weights()
 
@@ -184,8 +186,10 @@ class TopDown(BasePose):
             if self.with_keypoint:
                 output_flipped_heatmap = self.keypoint_head.inference_model(
                     features_flipped, img_metas[0]['flip_pairs'])
-                output_heatmap = (output_heatmap +
-                                  output_flipped_heatmap) * 0.5
+                output_heatmap = (output_heatmap + output_flipped_heatmap)
+                if self.test_cfg.get('regression_flip_shift', False):
+                    output_heatmap[..., 0] -= 1.0 / img_width
+                output_heatmap = output_heatmap / 2
 
         if self.with_keypoint:
             keypoint_result = self.keypoint_head.decode(

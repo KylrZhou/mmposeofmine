@@ -135,8 +135,8 @@ class AnimalMacaqueDataset(Kpt2dSviewRgbImgTopDownDataset):
             x, y, w, h = obj['bbox']
             x1 = max(0, x)
             y1 = max(0, y)
-            x2 = min(width - 1, x1 + max(0, w - 1))
-            y2 = min(height - 1, y1 + max(0, h - 1))
+            x2 = min(width - 1, x1 + max(0, w))
+            y2 = min(height - 1, y1 + max(0, h))
             if ('area' not in obj or obj['area'] > 0) and x2 > x1 and y2 > y1:
                 obj['clean_bbox'] = [x1, y1, x2 - x1, y2 - y1]
                 valid_objs.append(obj)
@@ -158,13 +158,9 @@ class AnimalMacaqueDataset(Kpt2dSviewRgbImgTopDownDataset):
             joints_3d[:, :2] = keypoints[:, :2]
             joints_3d_visible[:, :2] = np.minimum(1, keypoints[:, 2:3])
 
-            center, scale = self._xywh2cs(*obj['clean_bbox'][:4])
-
             image_file = osp.join(self.img_prefix, self.id2name[img_id])
             rec.append({
                 'image_file': image_file,
-                'center': center,
-                'scale': scale,
                 'bbox': obj['clean_bbox'][:4],
                 'rotation': 0,
                 'joints_3d': joints_3d,
@@ -273,11 +269,19 @@ class AnimalMacaqueDataset(Kpt2dSviewRgbImgTopDownDataset):
 
         self._write_coco_keypoint_results(valid_kpts, res_file)
 
-        info_str = self._do_python_keypoint_eval(res_file)
-        name_value = OrderedDict(info_str)
+        # do evaluation only if the ground truth keypoint annotations exist
+        if 'annotations' in self.coco.dataset:
+            info_str = self._do_python_keypoint_eval(res_file)
+            name_value = OrderedDict(info_str)
 
-        if tmp_folder is not None:
-            tmp_folder.cleanup()
+            if tmp_folder is not None:
+                tmp_folder.cleanup()
+        else:
+            warnings.warn(f'Due to the absence of ground truth keypoint'
+                          f'annotations, the quantitative evaluation can not'
+                          f'be conducted. The prediction results have been'
+                          f'saved at: {osp.abspath(res_file)}')
+            name_value = {}
 
         return name_value
 

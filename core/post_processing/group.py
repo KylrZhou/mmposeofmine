@@ -63,8 +63,8 @@ def _match_by_tag(inp, params):
         tags = tag_k[idx]
         joints = np.concatenate((loc_k[idx], val_k[idx, :, None], tags), 1)
         mask = joints[:, 2] > params.detection_threshold
-        tags = tags[mask]
-        joints = joints[mask]
+        tags = tags[mask]  # shape: [M, L]
+        joints = joints[mask]  # shape: [M, 3 + L], 3: x, y, val
 
         if joints.shape[0] == 0:
             continue
@@ -75,14 +75,16 @@ def _match_by_tag(inp, params):
                 joint_dict.setdefault(key, np.copy(default_))[idx] = joint
                 tag_dict[key] = [tag]
         else:
-            grouped_keys = list(joint_dict.keys())[:params.max_num_people]
+            # shape: [M]
+            grouped_keys = list(joint_dict.keys())
+            if params.ignore_too_much:
+                grouped_keys = grouped_keys[:params.max_num_people]
+            # shape: [M, L]
             grouped_tags = [np.mean(tag_dict[i], axis=0) for i in grouped_keys]
 
-            if (params.ignore_too_much
-                    and len(grouped_keys) == params.max_num_people):
-                continue
-
+            # shape: [M, M, L]
             diff = joints[:, None, 3:] - np.array(grouped_tags)[None, :, :]
+            # shape: [M, M]
             diff_normed = np.linalg.norm(diff, ord=2, axis=2)
             diff_saved = np.copy(diff_normed)
 
@@ -112,7 +114,13 @@ def _match_by_tag(inp, params):
                         joints[row]
                     tag_dict[key] = [tags[row]]
 
-    results = np.array([joint_dict[i] for i in joint_dict]).astype(np.float32)
+    joint_dict_keys = list(joint_dict.keys())
+    if params.ignore_too_much:
+        # The new person joints beyond the params.max_num_people will be
+        # ignored, for the dict is in ordered when python > 3.6 version.
+        joint_dict_keys = joint_dict_keys[:params.max_num_people]
+    results = np.array([joint_dict[i]
+                        for i in joint_dict_keys]).astype(np.float32)
     return results
 
 
@@ -408,3 +416,142 @@ class HeatmapParser:
             results = [results]
 
         return results, scores
+
+
+class HeatmapOffsetParser:
+    """The heatmap&offset parser for post processing."""
+
+    def __init__(self, cfg):
+        super(HeatmapOffsetParser, self).__init__()
+
+        self.num_joints = cfg['num_joints']
+        self.keypoint_threshold = cfg['keypoint_threshold']
+        self.max_num_people = cfg['max_num_people']
+
+        # init pooling layer
+        kernel_size = cfg.get('max_pool_kernel', 5)
+        self.pool = torch.nn.MaxPool2d(kernel_size, 1, kernel_size // 2)
+
+    def _offset_to_pose(self, offsets):
+        """Convert offset maps to pose maps.
+
+        Note:
+            batch size: N
+            number of keypoints: K
+            offset maps height: H
+            offset maps width: W
+
+        Args:
+            offsets (torch.Tensor[NxKxHxW]): model output offset maps.
+
+        Returns:
+            torch.Tensor[NxKxHxW]: A tensor containing pose for each pixel.
+        """
+        h, w = offsets.shape[-2:]
+        offsets = offsets.view(self.num_joints, -1, h, w)
+
+        # generate regular coordinates
+        x = torch.arange(0, offsets.shape[-1]).float()
+        y = torch.arange(0, offsets.shape[-2]).float()
+        y, x = torch.meshgrid(y, x)
+        regular_coords = torch.stack((x, y), dim=0).unsqueeze(0)
+
+        posemaps = regular_coords.to(offsets) - offsets
+        posemaps = posemaps.view(1, -1, h, w)
+        return posemaps
+
+    def _get_maximum_from_heatmap(self, heatmap):
+        """Find local maximum of heatmap to localize instances.
+
+        Note:
+            batch size: N
+            heatmap height: H
+            heatmap width: W
+
+        Args:
+            heatmap (torch.Tensor[Nx1xHxW]): model output center heatmap.
+
+        Returns:
+            tuple: A tuple containing instances detection results.
+
+            - pos_idx (torch.Tensor): Index of pixels which have detected
+                instances.
+            - score (torch.Tensor): Score of detected instances.
+        """
+        assert heatmap.size(0) == 1 and heatmap.size(1) == 1
+        max_map = torch.eq(heatmap, self.pool(heatmap)).float()
+        heatmap = heatmap * max_map
+        score = heatmap.view(-1)
+
+        score, pos_idx = score.topk(self.max_num_people)
+        mask = score > self.keypoint_threshold
+        score = score[mask]
+        pos_idx = pos_idx[mask]
+        return pos_idx, score
+
+    def decode(self, heatmaps, offsets):
+        """Convert center heatmaps and offset maps to poses.
+
+        Note:
+            batch size: N
+            number of keypoints: K
+            offset maps height: H
+            offset maps width: W
+
+        Args:
+            heatmaps (torch.Tensor[Nx(1+K)xHxW]): model output heatmaps.
+            offsets (torch.Tensor[NxKxHxW]): model output offset maps.
+
+        Returns:
+            torch.Tensor[NxKx4]: A tensor containing predicted pose and
+                score for each instance.
+        """
+
+        posemap = self._offset_to_pose(offsets)
+        inst_indexes, inst_scores = self._get_maximum_from_heatmap(
+            heatmaps[:, :1])
+
+        poses = posemap.view(posemap.size(1), -1)[..., inst_indexes]
+        poses = poses.view(self.num_joints, 2, -1).permute(2, 0,
+                                                           1).contiguous()
+        inst_scores = inst_scores.unsqueeze(1).unsqueeze(2).expand(
+            poses.size())
+        poses = torch.cat((poses, inst_scores), dim=2)
+        return poses.clone()
+
+    def refine_score(self, heatmaps, poses):
+        """Refine instance scores with keypoint heatmaps.
+
+        Note:
+            batch size: N
+            number of keypoints: K
+            offset maps height: H
+            offset maps width: W
+
+        Args:
+            heatmaps (torch.Tensor[Nx(1+K)xHxW]): model output heatmaps.
+            poses (torch.Tensor[NxKx4]): decoded pose and score for each
+                instance.
+
+        Returns:
+            torch.Tensor[NxKx4]: poses with refined scores.
+        """
+        normed_poses = poses.unsqueeze(0).permute(2, 0, 1, 3).contiguous()
+        normed_poses = torch.cat((
+            normed_poses.narrow(3, 0, 1) / (heatmaps.size(3) - 1) * 2 - 1,
+            normed_poses.narrow(3, 1, 1) / (heatmaps.size(2) - 1) * 2 - 1,
+        ),
+                                 dim=3)
+        kpt_scores = torch.nn.functional.grid_sample(
+            heatmaps[:, 1:].view(self.num_joints, 1, heatmaps.size(2),
+                                 heatmaps.size(3)),
+            normed_poses,
+            padding_mode='border').view(self.num_joints, -1)
+        kpt_scores = kpt_scores.transpose(0, 1).contiguous()
+
+        # scores only from keypoint heatmaps
+        poses[..., 3] = kpt_scores
+        # combine center and keypoint heatmaps
+        poses[..., 2] = poses[..., 2] * kpt_scores
+
+        return poses

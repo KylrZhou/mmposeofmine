@@ -86,8 +86,8 @@ class PoseLifter(BasePose):
         if self.semi:
             assert keypoint_head is not None and traj_head is not None
             self.loss_semi = builder.build_loss(loss_semi)
-
-        self.init_weights(pretrained=pretrained)
+        self.pretrained = pretrained
+        self.init_weights()
 
     @property
     def with_neck(self):
@@ -125,13 +125,15 @@ class PoseLifter(BasePose):
 
     def init_weights(self, pretrained=None):
         """Weight initialization for model."""
-        self.backbone.init_weights(pretrained)
+        if pretrained is not None:
+            self.pretrained = pretrained
+        self.backbone.init_weights(self.pretrained)
         if self.with_neck:
             self.neck.init_weights()
         if self.with_keypoint:
             self.keypoint_head.init_weights()
         if self.with_traj_backbone:
-            self.traj_backbone.init_weights(pretrained)
+            self.traj_backbone.init_weights(self.pretrained)
         if self.with_traj_neck:
             self.traj_neck.init_weights()
         if self.with_traj:
@@ -294,6 +296,7 @@ class PoseLifter(BasePose):
                     thickness=2,
                     vis_height=400,
                     num_instances=-1,
+                    axis_azimuth=70,
                     win_name='',
                     show=False,
                     wait_time=0,
@@ -321,7 +324,13 @@ class PoseLifter(BasePose):
             vis_height (int): The image height of the visualization. The width
                 will be N*vis_height depending on the number of visualized
                 items.
+            num_instances (int): Number of instances to be shown in 3D. If
+                smaller than 0, all the instances in the result will be shown.
+                Otherwise, pad or truncate the result to a length of
+                num_instances.
+            axis_azimuth (float): axis azimuth angle for 3D visualizations.
             win_name (str): The window name.
+            show (bool): Whether to directly show the visualization.
             wait_time (int): Value of waitKey param.
                 Default: 0.
             out_file (str or None): The filename to write the image.
@@ -381,7 +390,9 @@ class PoseLifter(BasePose):
             pose_kpt_color,
             pose_link_color,
             vis_height,
-            num_instances=num_instances)
+            num_instances=num_instances,
+            axis_azimuth=axis_azimuth,
+        )
 
         if show:
             mmcv.visualization.imshow(img_vis, win_name, wait_time)

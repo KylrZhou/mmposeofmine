@@ -5,8 +5,8 @@ import numpy as np
 import torch
 from mmcv.parallel import collate, scatter
 
+from mmpose.core.bbox import bbox_xywh2cs, bbox_xywh2xyxy, bbox_xyxy2xywh
 from mmpose.datasets.pipelines import Compose
-from .inference import _box2cs, _xywh2xyxy, _xyxy2xywh
 
 
 def extract_pose_sequence(pose_results, frame_idx, causal, seq_len, step=1):
@@ -78,9 +78,12 @@ def _gather_pose_lifter_inputs(pose_results,
                     ``with_track_id==True```
                 - bbox ((4, ) or (5, )): left, right, top, bottom, [score]
 
-        bbox_center (ndarray[1, 2]): x, y. The average center coordinate of the
-            bboxes in the dataset.
-        bbox_scale (int|float): The average scale of the bboxes in the dataset.
+        bbox_center (ndarray[1, 2], optional): x, y. The average center
+            coordinate of the bboxes in the dataset. `bbox_center` will be
+            used only when `norm_pose_2d` is `True`.
+        bbox_scale (int|float, optional): The average scale of the bboxes
+            in the dataset.
+            `bbox_scale` will be used only when `norm_pose_2d` is `True`.
         norm_pose_2d (bool): If True, scale the bbox (along with the 2D
             pose) to bbox_scale, and move the bbox (along with the 2D pose) to
             bbox_center. Default: False.
@@ -259,9 +262,13 @@ def inference_pose_lifter_model(model,
 
     if dataset_info is not None:
         flip_pairs = dataset_info.flip_pairs
-        assert 'stats_info' in dataset_info._dataset_info
-        bbox_center = dataset_info._dataset_info['stats_info']['bbox_center']
-        bbox_scale = dataset_info._dataset_info['stats_info']['bbox_scale']
+        if 'stats_info' in dataset_info._dataset_info:
+            bbox_center = dataset_info._dataset_info['stats_info'][
+                'bbox_center']
+            bbox_scale = dataset_info._dataset_info['stats_info']['bbox_scale']
+        else:
+            bbox_center = None
+            bbox_scale = None
     else:
         warnings.warn(
             'dataset is deprecated.'
@@ -364,7 +371,9 @@ def vis_3d_pose_result(model,
                        kpt_score_thr=0.3,
                        radius=8,
                        thickness=2,
+                       vis_height=400,
                        num_instances=-1,
+                       axis_azimuth=70,
                        show=False,
                        out_file=None):
     """Visualize the 3D pose estimation results.
@@ -459,7 +468,9 @@ def vis_3d_pose_result(model,
         thickness=thickness,
         pose_kpt_color=pose_kpt_color,
         pose_link_color=pose_link_color,
+        vis_height=vis_height,
         num_instances=num_instances,
+        axis_azimuth=axis_azimuth,
         show=show,
         out_file=out_file)
 
@@ -516,11 +527,11 @@ def inference_interhand_3d_model(model,
 
     if format == 'xyxy':
         bboxes_xyxy = bboxes
-        bboxes_xywh = _xyxy2xywh(bboxes)
+        bboxes_xywh = bbox_xyxy2xywh(bboxes)
     else:
         # format is already 'xywh'
         bboxes_xywh = bboxes
-        bboxes_xyxy = _xywh2xyxy(bboxes)
+        bboxes_xyxy = bbox_xywh2xyxy(bboxes)
 
     # if bbox_thr remove all bounding box
     if len(bboxes_xywh) == 0:
@@ -543,7 +554,9 @@ def inference_interhand_3d_model(model,
 
     batch_data = []
     for bbox in bboxes:
-        center, scale = _box2cs(cfg, bbox)
+        image_size = cfg.data_cfg.image_size
+        aspect_ratio = image_size[0] / image_size[1]  # w over h
+        center, scale = bbox_xywh2cs(bbox, aspect_ratio, padding=1.25)
 
         # prepare data
         data = {
@@ -683,11 +696,11 @@ def inference_mesh_model(model,
 
     if format == 'xyxy':
         bboxes_xyxy = bboxes
-        bboxes_xywh = _xyxy2xywh(bboxes)
+        bboxes_xywh = bbox_xyxy2xywh(bboxes)
     else:
         # format is already 'xywh'
         bboxes_xywh = bboxes
-        bboxes_xyxy = _xywh2xyxy(bboxes)
+        bboxes_xyxy = bbox_xywh2xyxy(bboxes)
 
     # if bbox_thr remove all bounding box
     if len(bboxes_xywh) == 0:
@@ -710,8 +723,10 @@ def inference_mesh_model(model,
         raise NotImplementedError()
 
     batch_data = []
-    for bbox in bboxes:
-        center, scale = _box2cs(cfg, bbox)
+    for bbox in bboxes_xywh:
+        image_size = cfg.data_cfg.image_size
+        aspect_ratio = image_size[0] / image_size[1]  # w over h
+        center, scale = bbox_xywh2cs(bbox, aspect_ratio, padding=1.25)
 
         # prepare data
         data = {
